@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Telefoon Prototype 2.1</title>
+
+<style>
+  body {
+    margin: 0;
+    background: #000;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  #startScreen, 
+  #zoomScreen,
+  #melkglas {
+    position: absolute;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+    cursor: pointer;
+    transition: opacity .45s ease;
+  }
+
+  #zoomScreen {
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  #melkglas {
+    opacity: 0;
+    pointer-events: none;
+    z-index: 10;
+  }
+</style>
+
+</head>
+<body>
+
+<!-- Start -->
+<img id="startScreen" src="start.png" alt="Start">
+
+<!-- Telefoon -->
+<img id="zoomScreen" src="zoom.png" alt="Telefoon">
+
+<!-- Melkglas overlay -->
+<img id="melkglas" src="melkglas.png" alt="Melkglas effect">
+
+<!-- Audio -->
+<audio id="rumour" src="rumour.mp3" loop></audio>
+<audio id="gesprek" src="gesprek.mp4"></audio>
+<audio id="iemandBelt" src="iemand_belt.mp4"></audio>
+
+<script>
+/* --------------------------------------------------------
+   Elements
+-------------------------------------------------------- */
+
+const startScreen = document.getElementById("startScreen");
+const zoomScreen = document.getElementById("zoomScreen");
+const melkglas = document.getElementById("melkglas");
+
+const rumour = document.getElementById("rumour");
+const gesprek = document.getElementById("gesprek");
+const iemandBelt = document.getElementById("iemandBelt");
+
+/* --------------------------------------------------------
+   State
+-------------------------------------------------------- */
+
+let startClickMode = "rumour"; 
+let startClickable = true;   // <- NEW: om klikken tijdelijk uit te schakelen
+
+/* --------------------------------------------------------
+   Audio fade helpers
+-------------------------------------------------------- */
+
+async function fadeAudio(el, from, to, duration = 900) {
+  return new Promise(resolve => {
+    const steps = 40;
+    const step = (to - from) / steps;
+    const stepTime = duration / steps;
+
+    let current = from;
+    el.volume = from;
+
+    let int = setInterval(() => {
+      current += step;
+      el.volume = Math.min(Math.max(current, 0), 1);
+
+      if ((step > 0 && current >= to) ||
+          (step < 0 && current <= to)) {
+        el.volume = to;
+        clearInterval(int);
+        resolve();
+      }
+    }, stepTime);
+  });
+}
+
+async function safePlay(audio) {
+  try { await audio.play(); } catch(e) {}
+  await new Promise(r => requestAnimationFrame(r));
+}
+
+/* --------------------------------------------------------
+   MELKGLAS: slow fade over tijd
+-------------------------------------------------------- */
+
+function updateMelkglasOpacity(current, startTime, endTime) {
+  if (current < startTime || current > endTime) {
+    melkglas.style.opacity = 0;
+    return;
+  }
+
+  const total = endTime - startTime;
+  const progress = (current - startTime) / total;
+
+  // Fade in first half, fade out second half
+  let opacity;
+  if (progress < 0.5) {
+    opacity = progress * 2;    // 0 → 1
+  } else {
+    opacity = (1 - progress) * 2; // 1 → 0
+  }
+
+  melkglas.style.opacity = opacity;
+}
+
+/* --------------------------------------------------------
+   STARTSCREEN CLICK
+-------------------------------------------------------- */
+
+startScreen.addEventListener("click", async () => {
+
+  if (!startClickable) return;   // <- NEW: klik geblokkeerd
+
+  if (startClickMode === "rumour") {
+
+    zoomScreen.style.opacity = 1;
+    zoomScreen.style.pointerEvents = "auto";
+
+    startScreen.style.opacity = 0;
+    startScreen.style.pointerEvents = "none";
+
+    rumour.volume = 0;
+    await safePlay(rumour);
+    fadeAudio(rumour, 0, 1, 1200);
+
+    startClickMode = "iemand_belt";
+
+  } else if (startClickMode === "iemand_belt") {
+
+    iemandBelt.currentTime = 0;
+    iemandBelt.volume = 0;
+    await safePlay(iemandBelt);
+    await fadeAudio(iemandBelt, 0, 1, 800);
+
+    startClickable = false;   // blokkeer klikken tijdens afspelen
+
+    iemandBelt.onended = async () => {
+      await fadeAudio(iemandBelt, 1, 0, 500);
+      iemandBelt.pause();
+
+      // reset UI
+      zoomScreen.style.opacity = 0;
+      zoomScreen.style.pointerEvents = "none";
+
+      startScreen.style.opacity = 1;
+      startScreen.style.pointerEvents = "auto";
+
+      // reset to first cycle
+      startClickMode = "rumour";
+      startClickable = true; 
+    };
+  }
+
+});
+
+
+/* --------------------------------------------------------
+   TELEFOON CLICK → GESPREK
+-------------------------------------------------------- */
+
+zoomScreen.addEventListener("click", async (e) => {
+
+  const rect = zoomScreen.getBoundingClientRect();
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+
+  if (
+    x > rect.width * 0.25 &&
+    x < rect.width * 0.75 &&
+    y > rect.height * 0.25 &&
+    y < rect.height * 0.75
+  ) {
+
+    await fadeAudio(rumour, rumour.volume, 0, 900);
+    rumour.pause();
+
+    gesprek.currentTime = 0;
+    gesprek.volume = 0;
+    await safePlay(gesprek);
+    await fadeAudio(gesprek, 0, 1, 800);
+
+    /* ---------------------------------------------
+       MELKGLAS TRIGGER: 63.15s → 91.15s
+    --------------------------------------------- */
+    const startT = 63.15;
+    const endT = 91.15;
+
+    gesprek.ontimeupdate = () => {
+      updateMelkglasOpacity(gesprek.currentTime, startT, endT);
+    };
+
+    gesprek.onended = async () => {
+      await fadeAudio(gesprek, gesprek.volume, 0, 600);
+      gesprek.pause();
+
+      zoomScreen.style.opacity = 0;
+      zoomScreen.style.pointerEvents = "none";
+
+      startScreen.style.opacity = 1;
+      startScreen.style.pointerEvents = "auto";
+
+      rumour.currentTime = 0;
+      rumour.volume = 0;
+      await safePlay(rumour);
+      fadeAudio(rumour, 0, 1, 1500);
+
+      // Terwijl rumour speelt mag je NIET klikken
+      startClickable = false;
+
+      // Rumour is loop — maar jij wilde:
+      // eerst luisteren → DAN pas weer vanaf begin
+      // Dus: wacht één volledige play-lus
+      rumour.onended = () => {
+        startClickable = true;
+        startClickMode = "iemand_belt"; 
+      };
+    };
+  }
+});
+</script>
+
+</body>
+</html>
